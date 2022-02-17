@@ -14,8 +14,13 @@
 package main
 
 import (
+	//"context"
+	"fmt"
 	"net/http"
 	"os"
+	//"strconv"
+	//"strings"
+	//"time"
 
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
@@ -28,6 +33,7 @@ import (
 	"github.com/prometheus/exporter-toolkit/web"
 	webflag "github.com/prometheus/exporter-toolkit/web/kingpinflag"
 	"gopkg.in/alecthomas/kingpin.v2"
+	"net/url"
 )
 
 var (
@@ -61,6 +67,63 @@ const (
 	serverLabelName = "server"
 )
 
+
+func newHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+
+		v := r.URL.Query()
+		//params := v["collect[]"]
+		insname := v.Get("target")
+		dbname := v.Get("dbname")
+		user :=v.Get("user")
+		password :=v.Get("password")
+		ui := url.UserPassword(user, password).String()
+		dsn := fmt.Sprintf("postgresql://" + ui + "@" + insname+"/"+dbname+"?sslmode=disable")
+		// Use request context for cancellation when connection gets closed.
+		level.Info(logger).Log(dsn)
+
+		if len(dsn) == 0 {
+			level.Error(logger).Log("msg", "Couldn't find environment variables describing the datasource to use")
+			//dsn, err := getDataSources()
+			//if err != nil {
+			//	level.Error(logger).Log("msg", "Failed reading data sources", "err", err.Error())
+			//	os.Exit(1)
+			//}
+		}
+
+		opts := []ExporterOpt{
+			DisableDefaultMetrics(*disableDefaultMetrics),
+			DisableSettingsMetrics(*disableSettingsMetrics),
+			AutoDiscoverDatabases(*autoDiscoverDatabases),
+			WithUserQueriesPath(*queriesPath),
+			WithConstantLabels(*constantLabelsList),
+			ExcludeDatabases(*excludeDatabases),
+			IncludeDatabases(*includeDatabases),
+		}
+
+		exporter := NewExporter([]string{dsn}, opts...)
+		defer func() {
+			exporter.servers.Close()
+		}()
+
+		prometheus.MustRegister(version.NewCollector(exporterName))
+
+		prometheus.MustRegister(exporter)
+
+		pe, err := collector.NewPostgresCollector(logger, []string{dsn})
+		if err != nil {
+			level.Error(logger).Log("msg", "Failed to create PostgresCollector", "err", err.Error())
+			os.Exit(1)
+		}
+		prometheus.MustRegister(pe)
+
+		// Delegate http serving to Prometheus client library, which will call collector.Collect.
+		h := promhttp.HandlerFor(prometheus.DefaultGatherer, promhttp.HandlerOpts{})
+		h.ServeHTTP(w, r)
+	}
+}
+
+
 func main() {
 	kingpin.Version(version.Print(exporterName))
 	promlogConfig := &promlog.Config{}
@@ -85,50 +148,16 @@ func main() {
 		return
 	}
 
-	dsn, err := getDataSources()
-	if err != nil {
-		level.Error(logger).Log("msg", "Failed reading data sources", "err", err.Error())
-		os.Exit(1)
-	}
 
-	if len(dsn) == 0 {
-		level.Error(logger).Log("msg", "Couldn't find environment variables describing the datasource to use")
-		os.Exit(1)
-	}
-
-	opts := []ExporterOpt{
-		DisableDefaultMetrics(*disableDefaultMetrics),
-		DisableSettingsMetrics(*disableSettingsMetrics),
-		AutoDiscoverDatabases(*autoDiscoverDatabases),
-		WithUserQueriesPath(*queriesPath),
-		WithConstantLabels(*constantLabelsList),
-		ExcludeDatabases(*excludeDatabases),
-		IncludeDatabases(*includeDatabases),
-	}
-
-	exporter := NewExporter(dsn, opts...)
-	defer func() {
-		exporter.servers.Close()
-	}()
-
-	prometheus.MustRegister(version.NewCollector(exporterName))
-
-	prometheus.MustRegister(exporter)
-
-	pe, err := collector.NewPostgresCollector(logger, dsn)
-	if err != nil {
-		level.Error(logger).Log("msg", "Failed to create PostgresCollector", "err", err.Error())
-		os.Exit(1)
-	}
-	prometheus.MustRegister(pe)
-
-	http.Handle(*metricPath, promhttp.Handler())
+	//http.Handle(*metricPath, promhttp.Handler())
+	handlerFunc := newHandler()
+	http.Handle(*metricPath, promhttp.InstrumentMetricHandler(prometheus.DefaultRegisterer, handlerFunc))
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=UTF-8") // nolint: errcheck
 		w.Write(landingPage)                                       // nolint: errcheck
 	})
 
-	level.Info(logger).Log("msg", "Listening on address", "address", *listenAddress)
+	level.Info(logger).Log("msg", "@lupuxiao Listening on address", "address", *listenAddress)
 	srv := &http.Server{Addr: *listenAddress}
 	if err := web.ListenAndServe(srv, *webConfig, logger); err != nil {
 		level.Error(logger).Log("msg", "Error running HTTP server", "err", err)
