@@ -16,15 +16,17 @@ package main
 import (
 	//"context"
 	"fmt"
+	"github.com/prometheus-community/postgres_exporter/collector"
 	"net/http"
 	"os"
+	"strings"
+
 	//"strconv"
 	//"strings"
 	//"time"
 
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
-	"github.com/prometheus-community/postgres_exporter/collector"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/prometheus/common/promlog"
@@ -73,23 +75,16 @@ func newHandler() http.HandlerFunc {
 
 		v := r.URL.Query()
 		//params := v["collect[]"]
-		insname := v.Get("target")
-		dbname := v.Get("dbname")
-		user :=v.Get("user")
-		password :=v.Get("password")
+		target := v.Get("target")
+		insname := strings.Split(target,":")[0]
+		port := strings.Split(target,":")[1]
+		dbname := strings.Split(target,":")[4]
+		user :=strings.Split(target,":")[2]
+		password :=strings.Split(target,":")[3]
 		ui := url.UserPassword(user, password).String()
-		dsn := fmt.Sprintf("postgresql://" + ui + "@" + insname+"/"+dbname+"?sslmode=disable")
+		dsn := fmt.Sprintf("postgresql://" + ui + "@" + insname + ":" + port +"/"+dbname+"?sslmode=disable")
 		// Use request context for cancellation when connection gets closed.
 		level.Info(logger).Log(dsn)
-
-		if len(dsn) == 0 {
-			level.Error(logger).Log("msg", "Couldn't find environment variables describing the datasource to use")
-			//dsn, err := getDataSources()
-			//if err != nil {
-			//	level.Error(logger).Log("msg", "Failed reading data sources", "err", err.Error())
-			//	os.Exit(1)
-			//}
-		}
 
 		opts := []ExporterOpt{
 			DisableDefaultMetrics(*disableDefaultMetrics),
@@ -106,19 +101,23 @@ func newHandler() http.HandlerFunc {
 			exporter.servers.Close()
 		}()
 
-		prometheus.MustRegister(version.NewCollector(exporterName))
 
-		prometheus.MustRegister(exporter)
-
+		registry := prometheus.NewRegistry()
+		registry.MustRegister(version.NewCollector(exporterName))
+		registry.MustRegister(exporter)
 		pe, err := collector.NewPostgresCollector(logger, []string{dsn})
 		if err != nil {
 			level.Error(logger).Log("msg", "Failed to create PostgresCollector", "err", err.Error())
 			os.Exit(1)
 		}
-		prometheus.MustRegister(pe)
 
+		registry.MustRegister(pe)
+		gatherers := prometheus.Gatherers{
+			prometheus.DefaultGatherer,
+			registry,
+		}
 		// Delegate http serving to Prometheus client library, which will call collector.Collect.
-		h := promhttp.HandlerFor(prometheus.DefaultGatherer, promhttp.HandlerOpts{})
+		h := promhttp.HandlerFor(gatherers, promhttp.HandlerOpts{})
 		h.ServeHTTP(w, r)
 	}
 }
