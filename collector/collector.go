@@ -38,8 +38,9 @@ const (
 	// Namespace for all metrics.
 	namespace = "pg"
 
-	defaultEnabled = true
-	// defaultDisabled = false
+	//defaultEnabled = true
+	defaultEnabled = false
+	//defaultDisabled = false
 )
 
 var (
@@ -76,7 +77,10 @@ func registerCollector(name string, isDefaultEnabled bool, createFunc func(logge
 
 	flag := kingpin.Flag(flagName, flagHelp).Default(defaultValue).Action(collectorFlagAction(name)).Bool()
 	collectorState[name] = flag
-
+	fmt.Println("-------------------------")
+	fmt.Println(defaultValue)
+	fmt.Println(collectorState[name])
+	fmt.Println("-------------------------")
 	// Register the create function for this collector
 	factories[name] = createFunc
 }

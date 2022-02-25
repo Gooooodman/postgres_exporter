@@ -32,7 +32,6 @@ import (
 	"github.com/prometheus/common/promlog"
 	"github.com/prometheus/common/promlog/flag"
 	"github.com/prometheus/common/version"
-	"github.com/prometheus/exporter-toolkit/web"
 	webflag "github.com/prometheus/exporter-toolkit/web/kingpinflag"
 	"gopkg.in/alecthomas/kingpin.v2"
 	"net/url"
@@ -103,15 +102,17 @@ func newHandler() http.HandlerFunc {
 
 
 		registry := prometheus.NewRegistry()
-		registry.MustRegister(version.NewCollector(exporterName))
+		//registry.MustRegister(version.NewCollector(exporterName))
 		registry.MustRegister(exporter)
 		pe, err := collector.NewPostgresCollector(logger, []string{dsn})
 		if err != nil {
 			level.Error(logger).Log("msg", "Failed to create PostgresCollector", "err", err.Error())
 			os.Exit(1)
 		}
-
 		registry.MustRegister(pe)
+		//ctx := r.Context()
+		//registry.MustRegister(collector.New(ctx, dsn, metrics, filteredScrapers, logger))
+
 		gatherers := prometheus.Gatherers{
 			prometheus.DefaultGatherer,
 			registry,
@@ -122,6 +123,11 @@ func newHandler() http.HandlerFunc {
 	}
 }
 
+
+
+func init(){
+	prometheus.MustRegister(version.NewCollector(exporterName))
+}
 
 func main() {
 	kingpin.Version(version.Print(exporterName))
@@ -157,9 +163,17 @@ func main() {
 	})
 
 	level.Info(logger).Log("msg", "@lupuxiao Listening on address", "address", *listenAddress)
-	srv := &http.Server{Addr: *listenAddress}
-	if err := web.ListenAndServe(srv, *webConfig, logger); err != nil {
-		level.Error(logger).Log("msg", "Error running HTTP server", "err", err)
+	//srv := &http.Server{Addr: *listenAddress}
+	//if err := web.ListenAndServe(srv, *webConfig, logger); err != nil {
+	//	level.Error(logger).Log("msg", "Error running HTTP server", "err", err)
+	//	os.Exit(1)
+	//}
+
+	//level.Info(logger).Log("msg", "Listening on address", "address", *listenAddress)
+	if err := http.ListenAndServe(*listenAddress, nil); err != nil {
+		level.Error(logger).Log("msg", "Error starting HTTP server", "err", err)
 		os.Exit(1)
 	}
+
+
 }
